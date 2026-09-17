@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "name": "RoreStickers",
+  "description": "MoreStickers plugin for Discord Revenge.",
+  "plugins": {
+    "com.tfo.rorestickers": {
+      "name": "RoreStickers",
+      "description": "Adds sticker packs from other social media platforms (e.g. LINE) to Discord Revenge.",
+      "author": "tfo.",
+      "channels": {
+        "latest": "0.0.70040"
+      },
+      "versions": {
+        "0.0.70040": {
+          "url": "https://tfo-dot.github.io/RoreStickers/pool/com.tfo.rorestickers@0.0.70040.zip",
+          "sha256": "8b86fa67a314a47c45d0f2e9462f3fc609361f236c5797125c77cc62614882ba",
+          "size": 11441,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        }
+      }
+    }
+  }
+}
