@@ -8,18 +8,22 @@ import {
 	TouchableOpacity,
 	View,
 } from 'react-native'
-import { sendSticker } from '../discord'
 import { toggleFavoriteSticker, useRoreStorage } from '../storage'
 import { fuzzyScore, showToast } from '../utils'
 import { logger } from '../index'
 
 import type React from 'react'
 import type { Sticker, StickerPack } from '../types'
+import { downloadSticker } from '../native'
 
 interface StickerPickerProps {
 	channelId?: string
 	onClose?: () => void
 	onOpenSettings?: () => void
+	messageActionCreators?: any
+	uploadOrigin?: any
+	cloudUpload?: any
+	uploadPlatform?: any
 }
 
 const FAVORITES_ID = '__favorites__'
@@ -29,6 +33,10 @@ export default function StickerPicker({
 	channelId,
 	onClose,
 	onOpenSettings,
+	messageActionCreators,
+	uploadOrigin,
+	cloudUpload,
+	uploadPlatform
 }: StickerPickerProps): React.JSX.Element {
 	const storage = useRoreStorage()
 	const [selectedTabId, setSelectedTabId] = useState<string>(
@@ -85,7 +93,152 @@ export default function StickerPicker({
 
 	const handleSelectSticker = async (sticker: Sticker) => {
 		try {
-			await sendSticker(sticker, channelId)
+			const filename =
+				sticker.image.split("/").pop() ??
+				"sticker.avif";
+
+			const uri = await downloadSticker(sticker.image, filename);
+
+			if (!messageActionCreators) {
+				throw new Error(
+					"MessageActionCreators not ready",
+				);
+			}
+
+			if (!cloudUpload) {
+				throw new Error(
+					"CloudUpload not ready",
+				);
+			}
+
+			if (!uploadPlatform) {
+				throw new Error(
+					"UploadPlatform not ready",
+				);
+			}
+
+			const item = {
+				/*
+				 * Discord używa URI również jako id,
+				 * gdy plik pochodzi z RN.
+				 */
+				id: uri,
+
+				/*
+				 * Dla zwykłego image pickera w Twoim
+				 * logu było origin === 1.
+				 */
+				origin:
+					uploadOrigin?.IMAGE_PICKER
+					?? 1,
+
+				uri,
+				originalUri: uri,
+
+				mimeType:
+					"image/avif",
+
+				filename,
+
+				platform:
+					uploadPlatform.REACT_NATIVE,
+
+				/*
+				 * Nie znamy wymiarów i nie są one
+				 * potrzebne do samego uploadu.
+				 */
+				width: null,
+				height: null,
+
+				playableDuration: 0,
+
+				createdUsingInAppCamera:
+					false,
+			};
+
+			console.log(
+				"[Rore] upload item",
+				item,
+			);
+
+			/*
+			 * 1. item
+			 * 2. channelId
+			 *
+			 * Pozostałe parametry zostawiamy jak
+			 * w zwykłym CloudUpload.
+			 */
+			const upload =
+				new cloudUpload(
+					item,
+					channelId,
+				);
+
+			console.log(
+				"[Rore] CloudUpload",
+				{
+					id:
+						upload.id,
+
+					filename:
+						upload.filename,
+
+					mimeType:
+						upload.mimeType,
+
+					isImage:
+						upload.isImage,
+
+					isVideo:
+						upload.isVideo,
+
+					channelId:
+						upload.channelId,
+
+					allowOptimization:
+						upload.allowOptimization,
+				},
+			);
+
+			messageActionCreators
+				.sendMessage(
+					channelId,
+
+					{
+						content: "",
+						tts: false,
+
+						invalidEmojis: [],
+						validNonShortcutEmojis: [],
+					},
+
+					undefined,
+
+					{
+						location:
+							"chat_input",
+
+						attachmentsToUpload: [
+							upload,
+						],
+
+						onAttachmentUploadError(
+							file: any,
+							code: any,
+							reason: any,
+						) {
+							console.error(
+								"[Rore] upload failed",
+								{
+									file,
+									code,
+									reason,
+								},
+							);
+						},
+					},
+				);
+			
 			onClose?.()
 		} catch (e) {
 			logger.warn('[RoreStickers] Error selecting sticker:', e)

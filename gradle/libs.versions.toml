@@ -9,7 +9,7 @@ revengeApi = "1.0.0"
 compileSdk = "36"
 minSdk = "24"
 targetSdk = "36"
-javaVersion = "25"
+javaVersion = "17"
 
 [libraries]
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }

@@ -2,7 +2,7 @@ import { ActionSheetActionCreators } from '@revenge-mod/discord/actions'
 import { lookupModule } from '@revenge-mod/modules/finders'
 import { withProps } from '@revenge-mod/modules/finders/filters'
 import StickerPicker from './components/StickerPicker'
-import { addRecentSticker, getSettings } from './storage'
+import { addRecentSticker } from './storage'
 import { showToast } from './utils'
 import type { Sticker } from './types'
 import { logger } from './index'
@@ -191,82 +191,6 @@ export async function insertStickerToDraft(
 	} catch (e) {
 		console.warn('[RoreStickers] Failed to insert sticker into draft:', e)
 		showToast('Failed to insert sticker into draft.', true)
-	}
-}
-
-export async function sendSticker(
-	sticker: Sticker,
-	channelId?: string,
-): Promise<void> {
-	const targetChannelId = channelId || getCurrentChannelId()
-	if (!targetChannelId) {
-		showToast('No active channel selected.', true)
-		return
-	}
-
-	// const settings = await getSettings()
-
-	// if (settings.promptToUpload) {
-	// 	await insertStickerToDraft(sticker, targetChannelId)
-	// 	return
-	// }
-
-	console.log("HELP")
-
-	try {
-		console.log("Fetching message actions")
-
-		console.log("Sending message to: ", channelId)
-
-		const messageActions = getMessageActions()
-		if (messageActions?.sendMessage) {
-			console.log("If we can send message")
-
-			const SnowflakeUtil = findByProps("fromTimestamp", "generate") 
-				?? findByProps("fromTimestamp", "deconstruct");
-
-			const DISCORD_EPOCH = 1420070400000n;
-			let sequence = 0n;
-
-			function generateNonce(): string {
-				const timestamp = BigInt(Date.now()) - DISCORD_EPOCH;
-				const nonce = (timestamp << 22n) | (sequence++ % 4096n);
-				return nonce.toString();
-			}
-
-			const nonce = SnowflakeUtil?.generate?.() ?? generateNonce();
-
-			let x = messageActions.sendMessage(targetChannelId, {
-				content: sticker.image,
-				tts: false
-			}, true, { nonce }) as Promise<unknown>
-
-			x.then((r) => console.log("I got", r))
-			x.catch(e => console.error(e))
-
-			await x;
-
-			console.log("Updating recent")
-
-			await addRecentSticker(sticker)
-
-			console.log("Showing toast")
-
-			showToast('Sticker sent!')
-			return
-		}
-
-		console.log("We couldn't send message")
-
-		// Fallback: insert to draft if sendMessage is unavailable
-		await insertStickerToDraft(sticker, targetChannelId)
-	} catch (e) {
-		logger.warn('[RoreStickers] Failed to send sticker:', e)
-		showToast(
-			'Failed to send sticker directly. Inserting to draft instead...',
-			true,
-		)
-		await insertStickerToDraft(sticker, targetChannelId)
 	}
 }
 

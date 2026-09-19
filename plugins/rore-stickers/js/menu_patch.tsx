@@ -5,9 +5,8 @@ import {
 } from "@revenge-mod/discord/utils/modules/finders";
 import { instead } from "@revenge-mod/patcher";
 
-import React from "react";
+import React, { ReactNode } from "react";
 import {
-    View,
     Text,
     Pressable,
 } from "react-native";
@@ -19,8 +18,6 @@ const unpatches: Array<() => void> = [];
 const cleanups: Array<() => void> = [];
 
 let pendingRoreChannelId: string | undefined;
-
-let PortalKeyboardUIStore: any;
 let ChatInputUtils: any;
 
 const renderItemCache =
@@ -37,6 +34,10 @@ function MyPanel({
     return (
         <StickerPicker
             channelId={channelId}
+            messageActionCreators={MessageActionCreators}
+            uploadOrigin={UploadOrigin}
+            cloudUpload={CloudUpload}
+            uploadPlatform={UploadPlatform}
             onClose={() => {
                 console.log(
                     "[Rore] closing",
@@ -53,71 +54,6 @@ function MyPanel({
                     ?.closeCustomKeyboard
                     ?.();
             }} />
-        // <View
-        //     style={{
-        //         flex: 1,
-        //         backgroundColor:
-        //             "#1e1e2e",
-        //         padding: 16,
-        //     }}
-        // >
-        //     <Text
-        //         style={{
-        //             color: "white",
-        //             fontSize: 20,
-        //             fontWeight: "700",
-        //         }}
-        //     >
-        //         Rore Stickers
-        //     </Text>
-
-        //     <Pressable
-        //         onPress={() => {
-        //             console.log(
-        //                 "[Rore] closing",
-        //             );
-
-        //             const input =
-        //                 chatInputRef?.current;
-
-        //             /*
-        //              * Najpierw prawidłowo zamykamy
-        //              * custom keyboard + portal.
-        //              */
-        //             input
-        //                 ?.closeCustomKeyboard
-        //                 ?.();
-
-        //             /*
-        //              * Potem pokazujemy zwykłą
-        //              * klawiaturę tekstową.
-        //              */
-        //             input
-        //                 ?.openSystemKeyboard
-        //                 ?.();
-        //         }}
-        //     >
-        //         <Text style={{ color: "white" }}>
-        //             Close
-        //         </Text>
-        //     </Pressable>
-
-        //     <View
-        //         style={{
-        //             flex: 1,
-        //             alignItems: "center",
-        //             justifyContent: "center",
-        //         }}
-        //     >
-        //         <Text
-        //             style={{
-        //                 color: "white",
-        //             }}
-        //         >
-        //             My Panel
-        //         </Text>
-        //     </View>
-        // </View>
     );
 }
 
@@ -188,8 +124,123 @@ function wrapPortalRenderItem(
     return wrapped;
 }
 
+let MessageActionCreators: any;
+let CloudUpload: any;
+let UploadPlatform: any;
+let UploadAttachmentActionCreators: any;
+let DraftType: any;
+let UploadOrigin: any;
+
 export function start() {
     console.log("[Rore] starting");
+
+    cleanups.push(
+        getModuleWithImportedPath<any>(
+            "actions/MessageActionCreators.tsx",
+            mod => {
+                MessageActionCreators =
+                    mod?.default ?? mod;
+
+                instead(MessageActionCreators, "_sendMessage", function (args, originalFn) {
+                    const options = args[2];
+                    const attachments = options?.attachmentsToUpload;
+                    if (attachments?.length) {
+                        console.log("[Rore] final attachment status:", 
+                            JSON.stringify(attachments.map((a: any) => ({
+                                status: a.status,
+                                mimeType: a.mimeType,
+                                filename: a.filename,
+                                reactNativeFilePrepped: a.reactNativeFilePrepped,
+                                uploadedFilename: a.uploadedFilename,
+                                currentSize: a.currentSize,
+                            })))
+                        );
+                    }
+                    return originalFn(...args);
+                });
+            },
+        ),
+    );
+
+    cleanups.push(
+        getModuleWithImportedPath<any>(
+            "lib/uploader/CloudUpload.tsx",
+            mod => {
+                CloudUpload =
+                    mod?.CloudUpload;
+            },
+        ),
+    );
+
+    cleanups.push(
+        getModuleWithImportedPath<any>(
+            "lib/uploader/Upload.tsx",
+            mod => {
+                UploadPlatform =
+                    mod?.UploadPlatform;
+
+                UploadOrigin =
+                    mod?.UploadOrigin;
+            },
+        ),
+    );
+
+    cleanups.push(
+        getModuleWithImportedPath<any>(
+            "actions/UploadAttachmentActionCreators.tsx",
+            (mod, id) => {
+                UploadAttachmentActionCreators =
+                    mod?.default ?? mod;
+
+                console.log(
+                    "[Rore] UploadAttachmentActionCreators",
+                    id,
+                    Object.keys(
+                        UploadAttachmentActionCreators ?? {},
+                    ),
+                );
+
+                instead(mod?.default ?? mod, "addFile", function (args, originalFn) {
+                    console.log("[Rore] addFile args:", 
+                        JSON.stringify(args, (_, v) => typeof v === "function" ? "[fn]" : v)
+                    );
+                    return originalFn(...args);
+                });
+            },
+        ),
+    );
+
+    cleanups.push(
+        getModuleWithImportedPath<any>(
+            "stores/DraftStore.tsx",
+            (mod, id) => {
+                DraftType =
+                    mod?.DraftType;
+
+                console.log(
+                    "[Rore] DraftType",
+                    id,
+                    DraftType,
+                );
+            },
+        ),
+    );
+
+    cleanups.push(
+        getModuleWithImportedPath<any>(
+            "lib/uploader/Upload.tsx",
+            (mod, id) => {
+                UploadPlatform =
+                    mod?.UploadPlatform;
+
+                console.log(
+                    "[Rore] Upload",
+                    id,
+                    UploadPlatform,
+                );
+            },
+        ),
+    );
 
     cleanups.push(
         getModuleWithImportedPath<any>(
@@ -201,70 +252,6 @@ export function start() {
                     "[Rore] ChatInputUtils found",
                     id,
                     Object.keys(mod),
-                );
-            },
-        ),
-    );
-
-    cleanups.push(
-        getModules(
-            withProps(
-                "openPortalKeyboard",
-                "closePortalKeyboard",
-                "PortalKeyboardUIStore",
-            ),
-            mod => {
-                PortalKeyboardUIStore = mod;
-
-                console.log(
-                    "[Rore] PortalKeyboardUIStore",
-                    mod,
-                );
-
-                unpatches.push(
-                    instead(
-                        mod,
-                        "openPortalKeyboard",
-                        function (
-                            args,
-                            original,
-                        ) {
-                            const [
-                                type,
-                                channelId,
-                                chatInputRef,
-                            ] = args;
-
-                            console.log(
-                                "[Rore] openPortalKeyboard called",
-                                {
-                                    type,
-                                    channelId,
-                                    pendingRoreChannelId,
-                                },
-                            );
-
-                            if (
-                                type === "expression" && consumeRoreOpen(channelId)
-                            ) {
-                                console.log(
-                                    "[Rore] hijacking expression -> rore-stickers",
-                                );
-
-                                return original(
-                                    MY_VIEW_KEY,
-                                    channelId,
-                                    chatInputRef,
-                                );
-                            }
-
-                            return original(...args);
-                        },
-                    ),
-                );
-
-                console.log(
-                    "[Rore] openPortalKeyboard patched",
                 );
             },
         ),
@@ -407,7 +394,7 @@ export function start() {
 
                             const children =
                                 React.Children.toArray(
-                                    result.props?.children,
+                                    (result.props as { children: ReactNode | ReactNode[] })?.children,
                                 );
 
                             children.push(
@@ -565,11 +552,7 @@ export function stop() {
 
     cleanups.length = 0;
 
-    PortalKeyboardUIStore =
-        undefined;
-
     pendingRoreChannelId = undefined;
-    PortalKeyboardUIStore = undefined;
     ChatInputUtils = undefined;
 
     console.log("[Rore] stopped");
