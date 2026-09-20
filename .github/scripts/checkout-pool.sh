@@ -12,11 +12,13 @@ if git clone --depth 1 --branch "$POOL_BRANCH" "$POOL_REMOTE" "$POOL_CHECKOUT" 2
 elif [ "${REQUIRE_POOL:-0}" = 1 ]; then
     echo "::error::branch ${POOL_BRANCH} does not exist, so there is no pool to read"
     exit 1
-else
+elif [ ! -d "$POOL_CHECKOUT/.git" ]; then
     echo "No ${POOL_BRANCH} branch yet, starting an empty pool."
     mkdir -p "$POOL_CHECKOUT"
     git -C "$POOL_CHECKOUT" init -q -b "$POOL_BRANCH"
     git -C "$POOL_CHECKOUT" remote add origin "$POOL_REMOTE"
+else
+    echo "Pool directory already initialized, skipping init."
 fi
 
 mkdir -p "$POOL_CHECKOUT/pool"
