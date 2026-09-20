@@ -18,10 +18,15 @@ const unpatches: Array<() => void> = [];
 const cleanups: Array<() => void> = [];
 
 let pendingRoreChannelId: string | undefined;
+let activeRoreChannelId:
+    | string
+    | undefined;
 let ChatInputUtils: any;
 
 const renderItemCache =
     new WeakMap<Function, Function>();
+
+let PortalKeyboardUIStore: any;
 
 function MyPanel({
     chatInputRef,
@@ -133,6 +138,312 @@ let UploadOrigin: any;
 
 export function start() {
     console.log("[Rore] starting");
+
+    cleanups.push(
+        getModuleWithImportedPath<any>(
+            "modules/messages/native/renderer/createMessageContent.tsx",
+            (mod, id) => {
+                console.log(
+                    "[Rore] createMessageContent",
+                    id,
+                );
+
+                //TODO Create a sticker like thing, rn it crashes
+                unpatches.push(
+                    instead(
+                        mod,
+                        "default",
+                        (
+                            args,
+                            original,
+                        ) => {
+                            const ctx =
+                                args[0];
+
+                            const rawMessage =
+                                ctx?.message;
+
+                            const result =
+                                original(...args);
+
+                            if (
+                                !result ||
+                                !rawMessage
+                            ) {
+                                return result;
+                            }
+
+                            const roreIds =
+                                new Set(
+                                    (
+                                        rawMessage
+                                            .attachments ??
+                                        []
+                                    )
+                                        .filter(
+                                            (
+                                                attachment:
+                                                    any,
+                                            ) =>
+                                                attachment?.filename.startsWith("morestickers_"),
+                                        )
+                                        .map(
+                                            (
+                                                attachment:
+                                                    any,
+                                            ) =>
+                                                attachment.id,
+                                        ),
+                                );
+
+                            const transformedAttachments =
+                                result.attachments ?? [];
+
+                            const roreAttachments =
+                                transformedAttachments.filter(
+                                    (attachment: any) =>
+                                        roreIds.has(
+                                            attachment.id,
+                                        ),
+                                );
+
+                            const normalAttachments =
+                                transformedAttachments.filter(
+                                    (attachment: any) =>
+                                        !roreIds.has(
+                                            attachment.id,
+                                        ),
+                                );
+
+                            const roreStickers =
+                                roreAttachments.map(
+                                    (attachment: any) => ({
+                                        /*
+                                         * marker dla nas
+                                         */
+                                        asset:
+                                            `rore:${attachment.id}`,
+
+                                        /*
+                                         * Już przetworzony URL
+                                         * attachmentu/CDN.
+                                         */
+                                        url:
+                                            attachment.url,
+
+                                        width: 160,
+                                        height: 160,
+
+                                        /*
+                                         * NativeLottieRenderMode.STILL
+                                         */
+                                        renderMode: 1,
+
+                                        accessibilityLabel:
+                                            "Rore sticker",
+
+                                        accessibilityHint: "",
+                                    }),
+                                );
+
+                            return {
+                                ...result,
+
+                                attachments:
+                                    normalAttachments,
+
+                                stickers: [
+                                    ...(result.stickers ?? []),
+                                    ...roreStickers,
+                                ],
+                            };
+                        },
+                    ),
+                );
+            },
+        ),
+    );
+
+    cleanups.push(
+        getModuleWithImportedPath<any>(
+            "modules/expression_picker/native/ExpressionPicker.tsx",
+            (mod, id) => {
+                console.log(
+                    "[Rore] ExpressionPicker found",
+                    id,
+                );
+
+                const memo =
+                    mod?.default ?? mod;
+
+                if (
+                    typeof memo?.type !==
+                    "function"
+                ) {
+                    console.warn(
+                        "[Rore] ExpressionPicker.type missing",
+                    );
+
+                    return;
+                }
+
+                unpatches.push(
+                    instead(
+                        memo,
+                        "type",
+                        (
+                            args,
+                            original,
+                        ) => {
+                            const props =
+                                args[0];
+
+                            const channelId =
+                                props
+                                    ?.channel
+                                    ?.id;
+
+                            /*
+                             * Zwykły Discord picker.
+                             */
+                            if (
+                                !channelId ||
+                                activeRoreChannelId
+                                !== channelId
+                            ) {
+                                return original(
+                                    ...args,
+                                );
+                            }
+
+                            console.log(
+                                "[Rore] replacing ExpressionPicker",
+                                channelId,
+                            );
+
+                            return (
+                                <StickerPicker
+                                    channelId={
+                                        channelId
+                                    }
+                                    messageActionCreators={
+                                        MessageActionCreators
+                                    }
+                                    uploadOrigin={
+                                        UploadOrigin
+                                    }
+                                    cloudUpload={
+                                        CloudUpload
+                                    }
+                                    uploadPlatform={
+                                        UploadPlatform
+                                    }
+                                    onClose={() => {
+                                        activeRoreChannelId =
+                                            undefined;
+
+                                        const input =
+                                            ChatInputUtils
+                                                ?.getBestActiveInputForChannelId
+                                                ?.(
+                                                    channelId,
+                                                );
+
+                                        input
+                                            ?.closeCustomKeyboard
+                                            ?.();
+                                    }}
+                                />
+                            );
+                        },
+                    ),
+                );
+            },
+        ),
+    );
+
+    cleanups.push(
+        getModules(
+            withProps(
+                "openPortalKeyboard",
+                "closePortalKeyboard",
+                "PortalKeyboardUIStore",
+            ),
+            mod => {
+                PortalKeyboardUIStore = mod;
+
+                console.log("[Rore] PortalKeyboardUIStore", mod);
+
+                unpatches.push(
+                    instead(
+                        mod,
+                        "openPortalKeyboard",
+                        function (
+                            args,
+                            original,
+                        ) {
+                            const [
+                                type,
+                                channelId,
+                                chatInputRef,
+                            ] = args;
+
+                            console.log(
+                                "[Rore] openPortalKeyboard called",
+                                {
+                                    type,
+                                    channelId,
+                                    pendingRoreChannelId,
+                                },
+                            );
+
+                            if (type === "expression") {
+                                if (
+                                    consumeRoreOpen(channelId)
+                                ) {
+                                    console.log(
+                                        "[Rore] expression belongs to Rore",
+                                        channelId,
+                                    );
+
+                                    activeRoreChannelId =
+                                        channelId;
+                                } else {
+                                    /*
+                                     * Normalne otwarcie Emoji/GIF/
+                                     * Stickers przez Discorda.
+                                     */
+                                    activeRoreChannelId =
+                                        undefined;
+                                }
+                            }
+
+                            return original(...args);
+
+                            // if (
+                            //     type === "expression" && consumeRoreOpen(channelId)
+                            // ) {
+                            //     console.log(
+                            //         "[Rore] hijacking expression -> rore-stickers",
+                            //     );
+
+                            //     return original(
+                            //         MY_VIEW_KEY,
+                            //         channelId,
+                            //         chatInputRef,
+                            //     );
+                            // }
+
+                            // return original(...args);
+                        },
+                    ),
+
+                );
+
+                console.log("[Rore] openPortalKeyboard patched");
+            },
+        )
+    );
 
     cleanups.push(
         getModuleWithImportedPath<any>(

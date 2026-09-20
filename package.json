@@ -20,6 +20,7 @@
 		"@revenge-mod/types": "git+https://github.com/revenge-mod/revenge-types.git",
 		"@rollup/plugin-commonjs": "^29.0.3",
 		"@rollup/plugin-node-resolve": "^16.0.3",
+		"@shopify/flash-list": "^2.3.2",
 		"rollup": "^4.62.4",
 		"rollup-plugin-esbuild": "^6.2.1",
 		"rollup-plugin-tsconfig-paths": "^1.5.2"

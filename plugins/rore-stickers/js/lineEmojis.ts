@@ -33,6 +33,7 @@ export function convertSticker(s: LineEmoji): Sticker {
 		stickerPackId: toStickerPackId(stickerPackId),
 		isAnimated: Boolean(s.animationUrl && s.animationUrl.length > 0),
 		readyToUpload: true,
+		previewImage: imageUrl
 	}
 }
 

@@ -2,24 +2,29 @@ import { useMemo, useState } from 'react'
 import {
 	Image,
 	ScrollView,
-	StyleSheet,
-	Text,
-	TextInput,
-	TouchableOpacity,
-	View,
+	Pressable,
+	View, useWindowDimensions
 } from 'react-native'
 import { toggleFavoriteSticker, useRoreStorage } from '../storage'
-import { fuzzyScore, showToast } from '../utils'
+import { base64UrlEncode, fuzzyScore, showToast } from '../utils'
 import { logger } from '../index'
+
+import SearchInput from '@revenge-mod/components/SearchInput'
+import { Tokens } from '@revenge-mod/discord/common/tokens'
+import { Design } from '@revenge-mod/discord/design'
+import {
+	lookupGeneratedIconComponent,
+} from '@revenge-mod/utils/discord'
 
 import type React from 'react'
 import type { Sticker, StickerPack } from '../types'
-import { downloadSticker } from '../native'
+import { downloadSticker, xxh64 } from '../native'
+
+import { FlashList } from "@shopify/flash-list";
 
 interface StickerPickerProps {
 	channelId?: string
 	onClose?: () => void
-	onOpenSettings?: () => void
 	messageActionCreators?: any
 	uploadOrigin?: any
 	cloudUpload?: any
@@ -32,7 +37,6 @@ const RECENTS_ID = '__recents__'
 export default function StickerPicker({
 	channelId,
 	onClose,
-	onOpenSettings,
 	messageActionCreators,
 	uploadOrigin,
 	cloudUpload,
@@ -94,10 +98,17 @@ export default function StickerPicker({
 	const handleSelectSticker = async (sticker: Sticker) => {
 		try {
 			const filename =
-				sticker.image.split("/").pop() ??
-				"sticker.avif";
+				sticker.image.split("/").pop() ?? "";
 
-			const uri = await downloadSticker(sticker.image, filename);
+			const extension = 
+				sticker.image.split(".").pop() ?? "";
+
+			const url = new URL(sticker.image)
+
+			const uri = await downloadSticker(
+				sticker.image,
+				`${sticker.id.replaceAll(":", "_")}.${extension}`
+			);
 
 			if (!messageActionCreators) {
 				throw new Error(
@@ -117,41 +128,49 @@ export default function StickerPicker({
 				);
 			}
 
-			const item = {
-				/*
-				 * Discord używa URI również jako id,
-				 * gdy plik pochodzi z RN.
-				 */
-				id: uri,
+			/*
+				Protocol for encoding sticker pack information into a filename
+				to make stickers discoverable by other users
+				It uses the format: morestickers_<base64urlPayload>.<extension>
+				base64urlPayload is a base64url-encoded csv
+				where first values always are: version
 
-				/*
-				 * Dla zwykłego image pickera w Twoim
-				 * logu było origin === 1.
-				 */
+				LINE values: line, sticker|emoji, stickerId, packId, packTitle
+				stickerId is LINE's internal ID number
+
+				Custom sticker values: host, stickerId, stickerPackId, iconEmoji, packTitle
+				"MoreStickers:" prefix is always stripped in stickerId and stickerPackId
+
+				"line" is constant, host is the hostname of the custom sticker pack
+
+				Semicolons are legal in packTitle (its always the last value)
+			*/
+
+			const sid = sticker.id.replace("MoreStickers:", "")
+			const spid = sticker.stickerPackId.replace("MoreStickers:", "") 
+
+			const spack = packs.find(elt => elt.id == sticker.stickerPackId && new URL(elt.logo.image).hostname == url.hostname)
+
+			const sdata = base64UrlEncode(`2;${await xxh64(url.hostname)};${sid};${spid};${sticker.title};${spack!.title}`)
+
+			const stickerName = `morestickers_${sdata}.${extension}`
+
+			const item = {
+				id: uri,
 				origin:
 					uploadOrigin?.IMAGE_PICKER
 					?? 1,
-
 				uri,
 				originalUri: uri,
 
 				mimeType:
 					"image/avif",
-
-				filename,
-
+				filename: stickerName,
 				platform:
 					uploadPlatform.REACT_NATIVE,
-
-				/*
-				 * Nie znamy wymiarów i nie są one
-				 * potrzebne do samego uploadu.
-				 */
 				width: null,
 				height: null,
-
 				playableDuration: 0,
-
 				createdUsingInAppCamera:
 					false,
 			};
@@ -161,49 +180,15 @@ export default function StickerPicker({
 				item,
 			);
 
-			/*
-			 * 1. item
-			 * 2. channelId
-			 *
-			 * Pozostałe parametry zostawiamy jak
-			 * w zwykłym CloudUpload.
-			 */
 			const upload =
 				new cloudUpload(
 					item,
 					channelId,
 				);
 
-			console.log(
-				"[Rore] CloudUpload",
-				{
-					id:
-						upload.id,
-
-					filename:
-						upload.filename,
-
-					mimeType:
-						upload.mimeType,
-
-					isImage:
-						upload.isImage,
-
-					isVideo:
-						upload.isVideo,
-
-					channelId:
-						upload.channelId,
-
-					allowOptimization:
-						upload.allowOptimization,
-				},
-			);
-
 			messageActionCreators
 				.sendMessage(
 					channelId,
-
 					{
 						content: "",
 						tts: false,
@@ -211,17 +196,13 @@ export default function StickerPicker({
 						invalidEmojis: [],
 						validNonShortcutEmojis: [],
 					},
-
 					undefined,
-
 					{
 						location:
 							"chat_input",
-
 						attachmentsToUpload: [
 							upload,
 						],
-
 						onAttachmentUploadError(
 							file: any,
 							code: any,
@@ -254,322 +235,488 @@ export default function StickerPicker({
 		}
 	}
 
+	const selectedPack =
+		packs.find(
+			pack =>
+				pack.id === selectedTabId,
+		)
+
+	const sectionTitle =
+		searchResults !== null
+			? 'Search results'
+			: selectedTabId === FAVORITES_ID
+				? 'Favorites'
+				: selectedTabId === RECENTS_ID
+					? 'Recently used'
+					: selectedPack?.title
+					?? 'Stickers'
+
+
+	const { width } =
+		useWindowDimensions()
+
+	const columns =
+		width >= 400
+			? 5
+			: 4
+
+	const horizontalPadding = 24
+	const itemWidth =
+		(width - horizontalPadding)
+		/ columns
+
+	const CloseIcon =
+		lookupGeneratedIconComponent(
+			'CircleXIcon',
+		)
+
+	const StarIcon =
+		lookupGeneratedIconComponent(
+			'StarIcon',
+		)
+
+	const ClockIcon =
+		lookupGeneratedIconComponent(
+			'ClockIcon',
+		)
+
+	const styles = Design.createStyles({
+		container: {
+			flex: 1,
+
+			backgroundColor:
+				Tokens.default.colors
+					.BACKGROUND_BASE_LOWER,
+		},
+
+		topArea: {
+			paddingHorizontal: 12,
+			paddingBottom: 8,
+		},
+
+		searchRow: {
+			flexDirection: 'row',
+			alignItems: 'center',
+			gap: 8,
+		},
+
+		search: {
+			flex: 1,
+		},
+
+		sectionHeader: {
+			height: 34,
+			paddingHorizontal: 12,
+
+			flexDirection: 'row',
+			alignItems: 'center',
+			justifyContent:
+				'space-between',
+		},
+
+		gridContent: {
+			paddingHorizontal: 12,
+			paddingBottom: 8,
+			flexGrow: 1,
+		},
+
+		stickerCell: {
+			height: 76,
+			alignItems: 'center',
+			justifyContent: 'center',
+			borderRadius: 12,
+		},
+
+		stickerPressed: {
+			backgroundColor:
+				Tokens.default.colors
+					.INTERACTIVE_BACKGROUND_ACTIVE,
+		},
+
+		stickerImage: {
+			width: 64,
+			height: 64,
+		},
+
+		categoryBar: {
+			height: 56,
+
+			borderTopWidth: 1,
+			borderTopColor:
+				Tokens.default.colors
+					.BORDER_SUBTLE,
+
+			backgroundColor:
+				Tokens.default.colors
+					.BACKGROUND_BASE_LOW,
+		},
+
+		categoryContent: {
+			paddingHorizontal: 6,
+			alignItems: 'center',
+		},
+
+		categoryButton: {
+			width: 48,
+			height: 56,
+			alignItems: 'center',
+			justifyContent: 'center',
+		},
+
+		categoryInner: {
+			width: 40,
+			height: 40,
+
+			borderRadius: 20,
+
+			alignItems: 'center',
+			justifyContent: 'center',
+		},
+
+		categoryActive: {
+			backgroundColor:
+				Tokens.default.colors
+					.INTERACTIVE_BACKGROUND_ACTIVE,
+		},
+
+		packIcon: {
+			width: 30,
+			height: 30,
+			borderRadius: 8,
+		},
+
+		empty: {
+			flex: 1,
+			alignItems: 'center',
+			justifyContent: 'center',
+			paddingHorizontal: 32,
+		},
+	})()
+
 	return (
 		<View style={styles.container}>
-			{/* Header */}
-			<View style={styles.header}>
-				<View style={styles.headerLeft}>
-					<Text style={styles.headerTitle}>RoreStickers</Text>
+			<View style={styles.searchRow}>
+				<View style={styles.search}>
+					<SearchInput
+						placeholder="Search Rore stickers"
+						onChange={setSearchQuery}
+						size="md"
+					/>
 				</View>
-				<View style={styles.headerActions}>
-					{onOpenSettings && (
-						<TouchableOpacity
-							style={styles.headerButton}
-							onPress={onOpenSettings}
-							accessibilityLabel="Settings"
-						>
-							<Text style={styles.headerButtonText}>⚙</Text>
-						</TouchableOpacity>
-					)}
-					{onClose && (
-						<TouchableOpacity
-							style={styles.headerButton}
-							onPress={onClose}
-							accessibilityLabel="Close"
-						>
-							<Text style={styles.headerButtonText}>✕</Text>
-						</TouchableOpacity>
-					)}
-				</View>
-			</View>
 
-			{/* Search Input */}
-			<View style={styles.searchContainer}>
-				<TextInput
-					style={styles.searchInput}
-					placeholder="Search stickers..."
-					placeholderTextColor="#8e9297"
-					value={searchQuery}
-					onChangeText={setSearchQuery}
-					returnKeyType="search"
-					clearButtonMode="while-editing"
-				/>
-				{searchQuery.length > 0 && (
-					<TouchableOpacity
-						style={styles.clearSearchButton}
-						onPress={() => setSearchQuery('')}
-					>
-						<Text style={styles.clearSearchText}>✕</Text>
-					</TouchableOpacity>
+				{onClose && CloseIcon && (
+					<Design.IconButton
+						icon={0}
+						// icon={CloseIcon}
+						variant="tertiary"
+						onPress={onClose}
+					/>
 				)}
 			</View>
 
-			{/* Pack Tabs Bar */}
-			{!searchQuery && (
-				<View style={styles.tabsWrapper}>
-					<ScrollView
-						horizontal
-						showsHorizontalScrollIndicator={false}
-						style={styles.tabsScroll}
-						contentContainerStyle={styles.tabsContent}
-					>
-						{/* Favorites Tab */}
-						<TouchableOpacity
-							style={[
-								styles.tabItem,
-								selectedTabId === FAVORITES_ID && styles.tabItemActive,
-							]}
-							onPress={() => setSelectedTabId(FAVORITES_ID)}
-						>
-							<Text style={styles.tabIcon}>★</Text>
-							<Text style={styles.tabBadge}>{favorites.length}</Text>
-						</TouchableOpacity>
+			<View style={styles.sectionHeader}>
+				<Design.Text
+					variant="text-sm/semibold"
+					color="text-default"
+				>
+					{sectionTitle}
+				</Design.Text>
 
-						{/* Recents Tab */}
-						<TouchableOpacity
-							style={[
-								styles.tabItem,
-								selectedTabId === RECENTS_ID && styles.tabItemActive,
-							]}
-							onPress={() => setSelectedTabId(RECENTS_ID)}
-						>
-							<Text style={styles.tabIcon}>🕒</Text>
-							<Text style={styles.tabBadge}>{recents.length}</Text>
-						</TouchableOpacity>
+				<Design.Text
+					variant="text-xs/medium"
+					color="text-muted"
+				>
+					{currentStickers.length}
+				</Design.Text>
+			</View>
 
-						{/* Installed Packs */}
-						{packs.map((pack: StickerPack) => {
-							const isActive = selectedTabId === pack.id
-							return (
-								<TouchableOpacity
-									key={pack.id}
-									style={[styles.tabItem, isActive && styles.tabItemActive]}
-									onPress={() => setSelectedTabId(pack.id)}
-								>
-									{pack.logo?.image ? (
-										<Image
-											source={{ uri: pack.logo.previewImage }}
-											style={styles.tabLogoImage}
-										/>
-									) : (
-										<Text style={styles.tabIcon}>📦</Text>
-									)}
-								</TouchableOpacity>
+			<FlashList
+				key={`stickers-${columns}`}
+				data={currentStickers}
+				numColumns={columns}
+
+				keyExtractor={(sticker: Sticker) =>
+					sticker.id
+				}
+
+				keyboardShouldPersistTaps="always"
+
+				showsVerticalScrollIndicator={
+					false
+				}
+
+				contentContainerStyle={
+					styles.gridContent
+				}
+
+				renderItem={({ item }: { item: Sticker }) => (
+					<Pressable
+						onPress={() =>
+							handleSelectSticker(
+								item,
 							)
-						})}
-					</ScrollView>
-				</View>
-			)}
-
-			{/* Main Sticker Grid */}
-			<ScrollView
-				style={styles.gridContainer}
-				contentContainerStyle={styles.gridContent}
-				showsVerticalScrollIndicator={true}
-			>
-				{currentStickers.length === 0 ? (
-					<View style={styles.emptyContainer}>
-						<Text style={styles.emptyTitle}>
-							{searchResults !== null
-								? 'No stickers found'
-								: selectedTabId === FAVORITES_ID
-									? 'No favorite stickers yet'
-									: selectedTabId === RECENTS_ID
-										? 'No recently used stickers'
-										: 'No stickers in this pack'}
-						</Text>
-						<Text style={styles.emptySubtitle}>
-							{searchResults !== null
-								? 'Try a different search keyword.'
-								: selectedTabId === FAVORITES_ID
-									? 'Long-press any sticker to add it to your favorites.'
-									: selectedTabId === RECENTS_ID
-										? 'Stickers you send will appear here.'
-										: 'Import sticker packs in Settings.'}
-						</Text>
-					</View>
-				) : (
-					<View style={styles.stickerGrid}>
-						{currentStickers.map((sticker: Sticker) => (
-							<TouchableOpacity
-								key={sticker.id}
-								style={styles.stickerCell}
-								onPress={() => handleSelectSticker(sticker)}
-								onLongPress={() => handleLongPressSticker(sticker)}
-								delayLongPress={400}
-								activeOpacity={0.7}
-							>
-								<Image
-									source={{ uri: sticker.previewImage }}
-									style={styles.stickerImage}
-									resizeMode="contain"
-								/>
-							</TouchableOpacity>
-						))}
-					</View>
+						}
+						onLongPress={() =>
+							handleLongPressSticker(
+								item,
+							)
+						}
+						delayLongPress={350}
+						style={({ pressed }) => [
+							styles.stickerCell,
+							{
+								width:
+									itemWidth,
+							},
+							pressed &&
+							styles.stickerPressed,
+						]}
+					>
+						<Image
+							source={{
+								uri:
+									item.previewImage,
+							}}
+							style={
+								styles.stickerImage
+							}
+							resizeMode="contain"
+						/>
+					</Pressable>
 				)}
-			</ScrollView>
+
+				ListEmptyComponent={
+					<></>
+				}
+			/>
+
+			
+			<View style={styles.categoryBar}>
+				<ScrollView
+					horizontal
+					showsHorizontalScrollIndicator={
+						false
+					}
+					contentContainerStyle={
+						styles.categoryContent
+					}
+				>
+					<CategoryButton
+						active={
+							selectedTabId ===
+							FAVORITES_ID
+						}
+						onPress={() => {
+							setSearchQuery('')
+							setSelectedTabId(
+								FAVORITES_ID,
+							)
+						}}
+					>
+						{StarIcon && (
+							<StarIcon size="sm" />
+						)}
+					</CategoryButton>
+
+					<CategoryButton
+						active={
+							selectedTabId ===
+							RECENTS_ID
+						}
+						onPress={() => {
+							setSearchQuery('')
+							setSelectedTabId(
+								RECENTS_ID,
+							)
+						}}
+					>
+						{ClockIcon && (
+							<ClockIcon size="sm" />
+						)}
+					</CategoryButton>
+
+					{packs.map(pack => (
+						<CategoryButton
+							key={pack.id}
+							active={
+								selectedTabId ===
+								pack.id
+							}
+							onPress={() => {
+								setSearchQuery('')
+								setSelectedTabId(
+									pack.id,
+								)
+							}}
+						>
+							{pack.logo?.previewImage ? (
+								<Image
+									source={{
+										uri:
+											pack.logo
+												.previewImage,
+									}}
+									style={
+										styles.packIcon
+									}
+								/>
+							) : (
+								<Design.Text
+									variant="text-sm/bold"
+								>
+									{pack.title
+										.slice(0, 1)
+										.toUpperCase()}
+								</Design.Text>
+							)}
+						</CategoryButton>
+					))}
+				</ScrollView>
+			</View>
 		</View>
 	)
 }
 
-const styles = StyleSheet.create({
-	container: {
-		flex: 1,
-		backgroundColor: '#2f3136',
-		minHeight: 380,
-		maxHeight: 520,
-		borderTopLeftRadius: 16,
-		borderTopRightRadius: 16,
-		overflow: 'hidden',
-	},
-	header: {
-		flexDirection: 'row',
-		alignItems: 'center',
-		justifyContent: 'space-between',
-		paddingHorizontal: 16,
-		paddingVertical: 12,
-		borderBottomWidth: StyleSheet.hairlineWidth,
-		borderBottomColor: '#202225',
-	},
-	headerLeft: {
-		flexDirection: 'row',
-		alignItems: 'center',
-	},
-	headerTitle: {
-		fontSize: 16,
-		fontWeight: '700',
-		color: '#ffffff',
-	},
-	headerActions: {
-		flexDirection: 'row',
-		alignItems: 'center',
-		gap: 8,
-	},
-	headerButton: {
-		padding: 6,
-		borderRadius: 16,
-		backgroundColor: '#36393f',
-		alignItems: 'center',
-		justifyContent: 'center',
-		width: 32,
-		height: 32,
-	},
-	headerButtonText: {
-		color: '#dcddde',
-		fontSize: 14,
-		fontWeight: 'bold',
-	},
-	searchContainer: {
-		flexDirection: 'row',
-		alignItems: 'center',
-		paddingHorizontal: 12,
-		paddingVertical: 8,
-		backgroundColor: '#2f3136',
-	},
-	searchInput: {
-		flex: 1,
-		height: 36,
-		backgroundColor: '#202225',
-		borderRadius: 8,
-		paddingHorizontal: 12,
-		color: '#ffffff',
-		fontSize: 14,
-	},
-	clearSearchButton: {
-		position: 'absolute',
-		right: 22,
-		padding: 4,
-	},
-	clearSearchText: {
-		color: '#8e9297',
-		fontSize: 12,
-	},
-	tabsWrapper: {
-		borderBottomWidth: StyleSheet.hairlineWidth,
-		borderBottomColor: '#202225',
-		backgroundColor: '#292b2f',
-	},
-	tabsScroll: {
-		flexGrow: 0,
-	},
-	tabsContent: {
-		flexDirection: 'row',
-		paddingHorizontal: 8,
-		paddingVertical: 6,
-		gap: 6,
-		alignItems: 'center',
-	},
-	tabItem: {
-		width: 42,
-		height: 42,
-		borderRadius: 10,
-		backgroundColor: '#36393f',
-		alignItems: 'center',
-		justifyContent: 'center',
-		position: 'relative',
-	},
-	tabItemActive: {
-		backgroundColor: '#5865f2',
-	},
-	tabIcon: {
-		fontSize: 20,
-		color: '#ffffff',
-	},
-	tabLogoImage: {
-		width: 32,
-		height: 32,
-		borderRadius: 6,
-	},
-	tabBadge: {
-		position: 'absolute',
-		bottom: 2,
-		right: 3,
-		fontSize: 9,
-		fontWeight: 'bold',
-		color: '#dcddde',
-	},
-	gridContainer: {
-		flex: 1,
-	},
-	gridContent: {
-		padding: 8,
-		flexGrow: 1,
-	},
-	stickerGrid: {
-		flexDirection: 'row',
-		flexWrap: 'wrap',
-		justifyContent: 'flex-start',
-	},
-	stickerCell: {
-		width: '25%',
-		aspectRatio: 1,
-		padding: 4,
-		alignItems: 'center',
-		justifyContent: 'center',
-	},
-	stickerImage: {
-		width: '100%',
-		height: '100%',
-	},
-	emptyContainer: {
-		flex: 1,
-		alignItems: 'center',
-		justifyContent: 'center',
-		paddingVertical: 48,
-		paddingHorizontal: 24,
-	},
-	emptyTitle: {
-		fontSize: 16,
-		fontWeight: '600',
-		color: '#ffffff',
-		marginBottom: 6,
-		textAlign: 'center',
-	},
-	emptySubtitle: {
-		fontSize: 13,
-		color: '#8e9297',
-		textAlign: 'center',
-		lineHeight: 18,
-	},
-})
+function CategoryButton({
+	active,
+	onPress,
+	children,
+}: {
+	active: boolean
+	onPress(): void
+	children: React.ReactNode
+}) {
+	const styles = Design.createStyles({
+		container: {
+			flex: 1,
+
+			backgroundColor:
+				Tokens.default.colors
+					.BACKGROUND_BASE_LOWER,
+		},
+
+		topArea: {
+			paddingHorizontal: 12,
+			paddingBottom: 8,
+		},
+
+		searchRow: {
+			flexDirection: 'row',
+			alignItems: 'center',
+			gap: 8,
+		},
+
+		search: {
+			flex: 1,
+		},
+
+		sectionHeader: {
+			height: 34,
+			paddingHorizontal: 12,
+
+			flexDirection: 'row',
+			alignItems: 'center',
+			justifyContent:
+				'space-between',
+		},
+
+		gridContent: {
+			paddingHorizontal: 12,
+			paddingBottom: 8,
+			flexGrow: 1,
+		},
+
+		stickerCell: {
+			height: 76,
+			alignItems: 'center',
+			justifyContent: 'center',
+			borderRadius: 12,
+		},
+
+		stickerPressed: {
+			backgroundColor:
+				Tokens.default.colors
+					.INTERACTIVE_BACKGROUND_ACTIVE,
+		},
+
+		stickerImage: {
+			width: 64,
+			height: 64,
+		},
+
+		categoryBar: {
+			height: 56,
+
+			borderTopWidth: 1,
+			borderTopColor:
+				Tokens.default.colors
+					.BORDER_SUBTLE,
+
+			backgroundColor:
+				Tokens.default.colors
+					.BACKGROUND_BASE_LOW,
+		},
+
+		categoryContent: {
+			paddingHorizontal: 6,
+			alignItems: 'center',
+		},
+
+		categoryButton: {
+			width: 48,
+			height: 56,
+			alignItems: 'center',
+			justifyContent: 'center',
+		},
+
+		categoryInner: {
+			width: 40,
+			height: 40,
+
+			borderRadius: 20,
+
+			alignItems: 'center',
+			justifyContent: 'center',
+		},
+
+		categoryActive: {
+			backgroundColor:
+				Tokens.default.colors
+					.INTERACTIVE_BACKGROUND_ACTIVE,
+		},
+
+		packIcon: {
+			width: 30,
+			height: 30,
+			borderRadius: 8,
+		},
+
+		empty: {
+			flex: 1,
+			alignItems: 'center',
+			justifyContent: 'center',
+			paddingHorizontal: 32,
+		},
+	})()
+
+	return (
+		<Pressable
+			accessibilityRole="tab"
+			accessibilityState={{
+				selected: active,
+			}}
+			onPress={onPress}
+			style={styles.categoryButton}
+		>
+			<View
+				style={[
+					styles.categoryInner,
+					active &&
+					styles.categoryActive,
+				]}
+			>
+				{children}
+			</View>
+		</Pressable>
+	)
+}

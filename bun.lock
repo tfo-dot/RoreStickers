@@ -12,6 +12,7 @@
         "@revenge-mod/types": "git+https://github.com/revenge-mod/revenge-types.git",
         "@rollup/plugin-commonjs": "^29.0.3",
         "@rollup/plugin-node-resolve": "^16.0.3",
+        "@shopify/flash-list": "^2.3.2",
         "rollup": "^4.62.4",
         "rollup-plugin-esbuild": "^6.2.1",
         "rollup-plugin-tsconfig-paths": "^1.5.2",
@@ -413,6 +414,8 @@
     "@rollup/rollup-win32-x64-gnu": ["@rollup/rollup-win32-x64-gnu@4.63.3", "", { "os": "win32", "cpu": "x64" }, "sha512-WuWtSJRNo549vzcfZyEgfqb6zeSgn1F+UE5kQ+BCjzz0W4MGCjntUHkZVc1VRuAM7+ULaSyhiPxD1spyewFvkQ=="],
 
     "@rollup/rollup-win32-x64-msvc": ["@rollup/rollup-win32-x64-msvc@4.63.3", "", { "os": "win32", "cpu": "x64" }, "sha512-+lIKX7O0+IGe7WuhATaAMMeT7B76vfhXH/l9wLQL+nvyhbw2ohYCKIdWL56JfDu75CWt5oKRP4QFH/jkMtBquA=="],
+
+    "@shopify/flash-list": ["@shopify/flash-list@2.3.2", "", { "peerDependencies": { "@babel/runtime": "*", "react": "*", "react-native": "*" } }, "sha512-vQnd0y0Ag11yzS30llaeCrtIU3xYTMe7KEOP3dveLImnVjQEUw6BEg1+Ztja6aODlVNz1BpvxtlQ5eZGxiLwKw=="],
 
     "@sinclair/typebox": ["@sinclair/typebox@0.27.12", "", {}, "sha512-hhyNJ+nbR6ZR7pToHvllEFun9TL0sbL+tk/ON75lo+Xas054uez98qRbsuNt7MBCyZKK4+8Yli/OAGZhmfBZ/g=="],
 
