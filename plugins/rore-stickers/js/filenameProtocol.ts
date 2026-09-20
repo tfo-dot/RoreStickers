@@ -15,6 +15,8 @@ import type {
 	StickerFilenamePayloadLine,
 	StickerPack,
 	StickerPackMeta,
+	RoreFilenamePayloadV2,
+	ParsedRoreAttachment
 } from './types'
 
 const MAGIC_PREFIX = 'morestickers_'
@@ -231,4 +233,110 @@ export function isPackInstalledFromMetadata(
 	const sourceUrl = `https://${host}${CUSTOM_PACK_PREFIX}${pathPart}${urlName}`
 
 	return packs.some(pack => pack.sourceUrl === sourceUrl)
+}
+
+
+export function parseRoreFilename(
+    filename: string,
+): RoreFilenamePayloadV2 | null {
+    const match =
+        /^morestickers_([A-Za-z0-9_-]+)\.([^.]+)$/i.exec(
+            filename,
+        )
+
+    if (!match) {
+        return null
+    }
+
+    try {
+        const decoded =
+            base64UrlDecode(match[1])
+
+        const [
+            version,
+            hostHash,
+            stickerId,
+            stickerPackId,
+            stickerTitle,
+            ...packTitleParts
+        ] = decoded.split(";")
+
+        if (
+            version !== "2" ||
+            !hostHash ||
+            !stickerId ||
+            !stickerPackId ||
+            !stickerTitle ||
+            packTitleParts.length === 0
+        ) {
+            return null
+        }
+
+        return {
+            version: 2,
+
+            hostHash,
+
+            stickerId,
+            stickerPackId,
+
+            stickerTitle,
+
+            packTitle:
+                packTitleParts.join(";"),
+        }
+    } catch {
+        return null
+    }
+}
+
+export function getRoreAttachments(
+    rawMessage: any,
+) {
+    const result:
+        ParsedRoreAttachment[] = []
+
+    for (
+        const attachment
+        of rawMessage?.attachments ?? []
+    ) {
+        const payload =
+            parseRoreFilename(
+                attachment?.filename,
+            )
+
+        if (!payload) {
+            continue
+        }
+
+        const imageUrl =
+            attachment.proxy_url ??
+            attachment.url
+
+        if (
+            typeof imageUrl !==
+            "string"
+        ) {
+            continue
+        }
+
+        result.push({
+            attachmentId:
+                attachment.id,
+
+            filename:
+                attachment.filename,
+
+            extension:
+                attachment.filename
+                    .split(".")
+                    .pop() ?? "",
+
+            imageUrl,
+
+            payload,
+        })
+    }
+
+    return result
 }

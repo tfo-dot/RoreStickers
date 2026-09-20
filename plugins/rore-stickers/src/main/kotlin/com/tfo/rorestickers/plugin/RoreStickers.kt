@@ -10,10 +10,19 @@ import android.content.Intent
 import java.io.File
 import java.net.URL
 
+private val messageRendererHooks = mutableSetOf<de.robv.android.xposed.XC_MethodHook.Unhook>()
+
 @Suppress("UNUSED")
 val roreStickersPlugin = plugin {
     start {
         val cacheDir = File(storageDir, "sticker_cache").also { it.mkdirs() }
+
+        runCatching {
+            messageRendererHooks += installRoreMessageRenderer(classLoader)
+            log.i("Installed Rore message renderer (${messageRendererHooks.size} hooks)")
+        }.onFailure {
+            log.e("Failed to install Rore message renderer", it)
+        }
 
         registerNativeMethod("${manifest.id}.downloadSticker") { rawArgs ->
             val args = rawArgs.asDelegate()
@@ -49,6 +58,8 @@ val roreStickersPlugin = plugin {
     }
 
     stop {
+        messageRendererHooks.forEach { runCatching { it.unhook() } }
+        messageRendererHooks.clear()
         log.i("Unloaded ${manifest.id}")
     }
 }

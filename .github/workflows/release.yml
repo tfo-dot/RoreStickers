@@ -39,6 +39,15 @@ jobs:
 
       - run: bun install
 
+      - name: Publish Revenge API to Maven Local
+        run: |
+          git clone https://github.com/revenge-mod/revenge-xposed.git /tmp/revenge-xposed
+          cd /tmp/revenge-xposed
+          ./gradlew publishToMavenLocal --no-daemon
+
+      - name: Check out the published pool
+        run: .github/scripts/checkout-pool.sh
+
       - name: Check out the published pool
         run: .github/scripts/checkout-pool.sh
 

@@ -4,7 +4,7 @@
 	"name": "RoreStickers",
 	"description": "Adds sticker packs from other social media platforms (e.g. LINE) to Discord Revenge.",
 	"author": "tfo.",
-	"version": "0.0.70089",
+	"version": "0.0.1",
 	"dependencies": {
 	    "revenge.api": { "version": ">=1" },
 	    "discord": { "version": "*" }

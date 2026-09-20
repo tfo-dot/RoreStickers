@@ -22,7 +22,8 @@ val androidLibraryPluginId = libs.plugins.android.library.get().pluginId
 
 // Gradle 9 removed Project.exec from task actions
 interface ExecOpsProvider {
-    @get:Inject val execOps: ExecOperations
+    @get:Inject
+    val execOps: ExecOperations
 }
 
 val rootExecOps = objects.newInstance<ExecOpsProvider>().execOps
@@ -152,8 +153,6 @@ configure(subprojects.filter { it.path.startsWith(":plugins:") }) {
         compileSdk = compileSdkVer.toInt()
         defaultConfig { minSdk = minSdkVer.toInt() }
         compileOptions {
-            sourceCompatibility = JavaVersion.toVersion(javaVer)
-            targetCompatibility = JavaVersion.toVersion(javaVer)
         }
         sourceSets {
             named("main") { kotlin.directories += "src/main/kotlin" }
@@ -258,7 +257,7 @@ val buildJs = tasks.register("buildJs") {
         if (tool == null) {
             logger.warn(
                 "No JS toolchain found (bun, npm, deno). Install Node >= 22.18, Bun or Deno 2, " +
-                    "or pass -PjsTool=/-PjsToolPath=. Skipping JS build.",
+                        "or pass -PjsTool=/-PjsToolPath=. Skipping JS build.",
             )
             return@doLast
         }

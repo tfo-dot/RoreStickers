@@ -119,3 +119,27 @@ export interface RoreStickersStorage {
 	favoriteStickers: Sticker[]
 	collapsedSections: string[]
 }
+
+export interface RoreFilenamePayloadV2 {
+    version: 2
+
+    hostHash: string
+
+    stickerId: string
+    stickerPackId: string
+
+    stickerTitle: string
+    packTitle: string
+}
+
+export interface ParsedRoreAttachment {
+    attachmentId: string
+
+    filename: string
+    extension: string
+
+    imageUrl: string
+
+    payload:
+        RoreFilenamePayloadV2
+}
