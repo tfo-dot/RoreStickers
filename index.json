@@ -8,7 +8,7 @@
       "description": "Adds sticker packs from other social media platforms (e.g. LINE) to Discord Revenge.",
       "author": "tfo.",
       "channels": {
-        "latest": "0.1.0"
+        "latest": "0.1.1"
       },
       "versions": {
         "0.0.70040": {
@@ -28,6 +28,19 @@
           "url": "https://tfo-dot.github.io/RoreStickers/pool/com.tfo.rorestickers@0.1.0.zip",
           "sha256": "50ab23d26e928003af36712bcf353d0337c242f7a11bb25259f1638d17ae4a6f",
           "size": 32415,
+          "dependencies": {
+            "revenge.api": {
+              "version": ">=1"
+            },
+            "discord": {
+              "version": "*"
+            }
+          }
+        },
+        "0.1.1": {
+          "url": "https://tfo-dot.github.io/RoreStickers/pool/com.tfo.rorestickers@0.1.1.zip",
+          "sha256": "f7b54be68b1a3fd0f9987d6d0ceb72506546153c6f4d981659d35b18df596c08",
+          "size": 38609,
           "dependencies": {
             "revenge.api": {
               "version": ">=1"
