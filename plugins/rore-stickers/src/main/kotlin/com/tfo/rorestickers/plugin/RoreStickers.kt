@@ -10,7 +10,7 @@ import android.content.Intent
 import java.io.File
 import java.net.URL
 
-private val messageRendererHooks = mutableSetOf<de.robv.android.xposed.XC_MethodHook.Unhook>()
+private val messageRendererHooks = mutableSetOf<RoreHookHandle>()
 
 @Suppress("UNUSED")
 val roreStickersPlugin = plugin {

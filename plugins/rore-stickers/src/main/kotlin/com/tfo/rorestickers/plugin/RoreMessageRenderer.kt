@@ -17,9 +17,10 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
+import java.lang.reflect.Method
+import java.lang.reflect.Modifier
+import java.util.Collections
+import java.util.WeakHashMap
 import java.nio.charset.StandardCharsets
 
 private const val MAGIC_PREFIX = "morestickers_"
@@ -111,8 +112,8 @@ internal object RoreFilenameProtocol {
  */
 internal fun installRoreMessageRenderer(
     classLoader: ClassLoader,
-): Set<XC_MethodHook.Unhook> {
-    val hooks = linkedSetOf<XC_MethodHook.Unhook>()
+): Set<RoreHookHandle> {
+    val hooks = linkedSetOf<RoreHookHandle>()
 
     try {
         hooks += installImageViewHolderHook(classLoader)
@@ -134,69 +135,73 @@ internal fun installRoreMessageRenderer(
  * HTTP fetch, keeps signed CDN URLs working, and lets Discord handle AVIF/WebP decoding. The only
  * custom child is a transparent interaction layer that opens Rore's info sheet.
  */
+private val pendingStickerByHolder = Collections.synchronizedMap(
+    WeakHashMap<Any, RoreMessageSticker>(),
+)
+
 private fun installImageViewHolderHook(
     classLoader: ClassLoader,
-): Set<XC_MethodHook.Unhook> {
+): Set<RoreHookHandle> {
     val holderClass = classLoader.loadClass(
         "com.discord.chat.presentation.message.viewholder.MediaImageViewHolder",
     )
 
-    return XposedBridge.hookAllMethods(
+    return RevengeHookBridge.hookAllMethods(
         holderClass,
         "bind",
-        object : XC_MethodHook() {
-            override fun beforeHookedMethod(param: MethodHookParam) {
-                if (param.args.size < 26) return
+        before = { scope ->
+            if (scope.args.size < 26) return@hookAllMethods
 
-                val itemView = getItemView(param.thisObject) ?: return
-                removeRoreOverlay(itemView)
+            val holder = scope.thisObject ?: return@hookAllMethods
+            val itemView = getItemView(holder) ?: return@hookAllMethods
 
-                val filename = param.args[24] as? String ?: return
-                val sticker = RoreFilenameProtocol.parse(filename) ?: return
+            pendingStickerByHolder.remove(holder)
+            removeRoreOverlay(itemView)
 
-                param.setObjectExtra("rore.sticker", sticker)
+            val filename = scope.args[24] as? String ?: return@hookAllMethods
+            val sticker = RoreFilenameProtocol.parse(filename) ?: return@hookAllMethods
 
-                // Give MediaImageView a 1:1 sticker source size. The companion mosaic hook below
-                // constrains a single Rore attachment to 160dp instead of the normal full width.
-                param.args[1] = STICKER_SIZE_DP
-                param.args[2] = STICKER_SIZE_DP
+            pendingStickerByHolder[holder] = sticker
 
-                // Remove normal attachment affordances that do not belong on a sticker.
-                param.args[11] = false // showDescription
-                param.args[12] = null  // description
-                param.args[13] = null  // descriptionHint
-                param.args[14] = false // useNewAltTextButton
-                param.args[15] = null  // onAltTextButtonClicked
-                param.args[16] = 0     // radiusPx
-                param.args[23] = false // shouldAutoPlayGif -> no GIF badge
-                param.args[25] = false // srcIsAnimated -> no GIF badge for AVIF/WebP
+            // Give MediaImageView a 1:1 sticker source size. The companion mosaic hook below
+            // constrains a single Rore attachment to 160dp instead of the normal full width.
+            scope.args[1] = STICKER_SIZE_DP
+            scope.args[2] = STICKER_SIZE_DP
 
-                // Replace Discord's "open media viewer" callback with the Rore info popout.
-                param.args[19] = View.OnClickListener { anchor ->
-                    showStickerInfoSheet(anchor, sticker, classLoader)
-                }
-                param.args[20] = View.OnLongClickListener { anchor ->
-                    showStickerInfoSheet(anchor, sticker, classLoader)
-                    true
-                }
+            // Remove normal attachment affordances that do not belong on a sticker.
+            scope.args[11] = false // showDescription
+            scope.args[12] = null  // description
+            scope.args[13] = null  // descriptionHint
+            scope.args[14] = false // useNewAltTextButton
+            scope.args[15] = null  // onAltTextButtonClicked
+            scope.args[16] = 0     // radiusPx
+            scope.args[23] = false // shouldAutoPlayGif -> no GIF badge
+            scope.args[25] = false // srcIsAnimated -> no GIF badge for AVIF/WebP
+
+            // Replace Discord's "open media viewer" callback with Rore's info sheet.
+            scope.args[19] = View.OnClickListener { anchor ->
+                showStickerInfoSheet(anchor, sticker, classLoader)
             }
-
-            override fun afterHookedMethod(param: MethodHookParam) {
-                val sticker =
-                    param.getObjectExtra("rore.sticker") as? RoreMessageSticker ?: return
-                val itemView = getItemView(param.thisObject) ?: return
-
-                // MediaImageViewHolder already loaded and laid out the image. Add only a transparent
-                // overlay so the rendered accessory is still Discord's efficient native image view,
-                // while all interaction belongs to Rore.
-                itemView.addView(
-                    RoreStickerInteractionView(itemView.context, sticker, classLoader),
-                    FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                    ),
-                )
+            scope.args[20] = View.OnLongClickListener { anchor ->
+                showStickerInfoSheet(anchor, sticker, classLoader)
+                true
             }
+        },
+        after = { scope ->
+            val holder = scope.thisObject ?: return@hookAllMethods
+            val sticker = pendingStickerByHolder.remove(holder) ?: return@hookAllMethods
+            val itemView = getItemView(holder) ?: return@hookAllMethods
+
+            // MediaImageViewHolder already loaded and laid out the image. Add only a transparent
+            // overlay so the rendered accessory is still Discord's efficient native image view,
+            // while all interaction belongs to Rore.
+            itemView.addView(
+                RoreStickerInteractionView(itemView.context, sticker, classLoader),
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
         },
     )
 }
@@ -212,57 +217,53 @@ private fun installImageViewHolderHook(
  */
 private fun installMosaicSizeHook(
     classLoader: ClassLoader,
-): Set<XC_MethodHook.Unhook> {
+): Set<RoreHookHandle> {
     val containerClass = classLoader.loadClass(
         "com.discord.chat.presentation.message.view.mosaic.AttachmentMediaMosaicContainerView",
     )
 
-    return XposedBridge.hookAllMethods(
+    return RevengeHookBridge.hookAllMethods(
         containerClass,
         "setAttachments",
-        object : XC_MethodHook() {
-            override fun afterHookedMethod(param: MethodHookParam) {
-                if (param.args.isEmpty()) return
+        after = { scope ->
+            if (scope.args.isEmpty()) return@hookAllMethods
 
-                val attachments = param.args[0] as? List<*> ?: return
-                if (attachments.size != 1) return
+            val attachments = scope.args[0] as? List<*> ?: return@hookAllMethods
+            if (attachments.size != 1) return@hookAllMethods
 
-                val filename = accessoryFilename(attachments[0]) ?: return
-                if (RoreFilenameProtocol.parse(filename) == null) return
+            val filename = accessoryFilename(attachments[0]) ?: return@hookAllMethods
+            if (RoreFilenameProtocol.parse(filename) == null) return@hookAllMethods
 
-                val container = param.thisObject as? View ?: return
-                val layoutManager = findFieldValueByClassName(
-                    param.thisObject,
-                    "com.discord.chat.presentation.message.view.mosaic_recycler.MosaicLayoutManager",
-                ) ?: return
+            val container = scope.thisObject as? View ?: return@hookAllMethods
+            val layoutManager = findFieldValueByClassName(
+                scope.thisObject!!,
+                "com.discord.chat.presentation.message.view.mosaic_recycler.MosaicLayoutManager",
+            ) ?: return@hookAllMethods
 
-                XposedHelpers.callMethod(
-                    layoutManager,
-                    "setAvailableWidth",
-                    dp(container.context, STICKER_SIZE_DP),
-                )
+            invokeMethod(
+                layoutManager,
+                "setAvailableWidth",
+                dp(container.context, STICKER_SIZE_DP),
+            )
 
-                container.requestLayout()
-            }
+            container.requestLayout()
         },
     )
 }
 
 private fun getItemView(holder: Any): ViewGroup? {
-    return runCatching {
-        XposedHelpers.getObjectField(holder, "itemView") as? ViewGroup
-    }.getOrNull()
+    return readField(holder, "itemView") as? ViewGroup
 }
 
 private fun accessoryFilename(accessory: Any?): String? {
     if (accessory == null) return null
 
     val attachment = runCatching {
-        XposedHelpers.callMethod(accessory, "getAttachment")
+        invokeMethod(accessory, "getAttachment")
     }.getOrNull() ?: return null
 
     return runCatching {
-        XposedHelpers.callMethod(attachment, "getFilename") as? String
+        invokeMethod(attachment, "getFilename") as? String
     }.getOrNull()
 }
 
@@ -330,7 +331,7 @@ private class RoreStickerInteractionView(
  * from an external server.
  *
  * At runtime we prefer Material's BottomSheetDialog through reflection, because Discord ships
- * Material Components but the Revenge plugin compiles only against Android/Xposed APIs. If the
+ * Material Components but the Revenge plugin intentionally avoids linking directly against Material/Xposed implementation classes. If the
  * Material class ever disappears, this gracefully falls back to a normal bottom-gravity Dialog.
  */
 private fun showStickerInfoSheet(
@@ -578,9 +579,11 @@ private fun createDiscordEmojiView(
 ): View {
     return runCatching {
         val renderableClass = classLoader.loadClass("com.discord.emoji.RenderableEmoji")
-        val companion = XposedHelpers.getStaticObjectField(renderableClass, "Companion")
-        val renderable = XposedHelpers.callMethod(companion, "unicode", emoji)
-        val url = XposedHelpers.callMethod(
+        val companion = readStaticField(renderableClass, "Companion")
+            ?: error("RenderableEmoji.Companion is unavailable")
+        val renderable = invokeMethod(companion, "unicode", emoji)
+            ?: error("Unable to create Discord Unicode emoji")
+        val url = invokeMethod(
             renderable,
             "getUrl",
             false,
@@ -592,7 +595,7 @@ private fun createDiscordEmojiView(
             .getConstructor(Context::class.java)
             .newInstance(context) as View
 
-        XposedHelpers.callMethod(view, "setImageURI", url)
+        invokeMethod(view, "setImageURI", url)
         view.contentDescription = emoji
         view
     }.getOrElse {
@@ -671,10 +674,10 @@ private fun configureMaterialBottomSheet(
     // Expand immediately and keep drag-to-dismiss. These methods are invoked reflectively so the
     // plugin still compiles without a Material Components dependency.
     runCatching {
-        val behavior = XposedHelpers.callMethod(dialog, "getBehavior") ?: return@runCatching
-        runCatching { XposedHelpers.callMethod(behavior, "setSkipCollapsed", true) }
-        runCatching { XposedHelpers.callMethod(behavior, "setDraggable", true) }
-        runCatching { XposedHelpers.callMethod(behavior, "setState", 3) } // STATE_EXPANDED
+        val behavior = invokeMethod(dialog, "getBehavior") ?: return@runCatching
+        runCatching { invokeMethod(behavior, "setSkipCollapsed", true) }
+        runCatching { invokeMethod(behavior, "setDraggable", true) }
+        runCatching { invokeMethod(behavior, "setState", 3) } // STATE_EXPANDED
     }
 
     sheet.requestLayout()
@@ -721,8 +724,9 @@ private fun discordPalette(
     fun color(getter: String, darkFallback: Int, lightFallback: Int): Int {
         return runCatching {
             val themeManagerKt = classLoader.loadClass("com.discord.theme.ThemeManagerKt")
-            val theme = XposedHelpers.callStaticMethod(themeManagerKt, "getTheme")
-            XposedHelpers.callMethod(theme, getter) as Int
+            val theme = invokeStaticMethod(themeManagerKt, "getTheme")
+                ?: error("Discord theme is unavailable")
+            invokeMethod(theme, getter) as Int
         }.getOrElse {
             if (dark) darkFallback else lightFallback
         }
@@ -765,6 +769,240 @@ private fun discordPalette(
             Color.rgb(209, 210, 215),
         ),
     )
+}
+
+
+/**
+ * External native Revenge plugins are loaded by their own DexClassLoader. In the current loader,
+ * direct references to de.robv.android.xposed.* are not guaranteed to resolve from that loader,
+ * even though Revenge itself is running under an Xposed-compatible framework.
+ *
+ * Use Revenge's own HookHelper reflectively instead. The actual XC_MethodHook subclass is created
+ * inside Revenge's module ClassLoader, while this plugin only sees ordinary Kotlin Function1/Any.
+ */
+internal fun interface RoreHookHandle {
+    fun unhook()
+}
+
+private class ReflectiveHookScope(
+    private val delegate: Any,
+) {
+    val thisObject: Any?
+        get() = invokeMethod(delegate, "getThisObject")
+
+    @Suppress("UNCHECKED_CAST")
+    val args: Array<Any?>
+        get() = invokeMethod(delegate, "getArgs") as Array<Any?>
+}
+
+private object RevengeHookBridge {
+    private val pluginClassLoader: ClassLoader
+        get() = RoreFilenameProtocol::class.java.classLoader
+            ?: error("Rore plugin ClassLoader is unavailable")
+
+    private val helperClass: Class<*> by lazy {
+        // Loading through the plugin loader preserves normal parent delegation to Revenge's module
+        // ClassLoader, which owns HookHelperKt and the real Xposed classes.
+        Class.forName(
+            "io.github.revenge.xposed.HookHelperKt",
+            true,
+            pluginClassLoader,
+        )
+    }
+
+    private val hookWithBuilder: Method by lazy {
+        helperClass.declaredMethods.firstOrNull { method ->
+            method.name == "hook" &&
+                method.parameterCount == 2 &&
+                method.parameterTypes[0] == Method::class.java &&
+                method.parameterTypes[1].name == "kotlin.jvm.functions.Function1"
+        }?.apply { isAccessible = true }
+            ?: error("Revenge Method.hook(builder) helper is unavailable")
+    }
+
+    fun hookAllMethods(
+        clazz: Class<*>,
+        name: String,
+        before: ((ReflectiveHookScope) -> Unit)? = null,
+        after: ((ReflectiveHookScope) -> Unit)? = null,
+    ): Set<RoreHookHandle> {
+        val methods = clazz.declaredMethods
+            .filter { it.name == name }
+
+        check(methods.isNotEmpty()) {
+            "No methods named $name found on ${clazz.name}"
+        }
+
+        val result = linkedSetOf<RoreHookHandle>()
+        try {
+            for (method in methods) {
+                result += hook(method, before, after)
+            }
+            return result
+        } catch (error: Throwable) {
+            result.forEach { runCatching { it.unhook() } }
+            throw error
+        }
+    }
+
+    private fun hook(
+        method: Method,
+        before: ((ReflectiveHookScope) -> Unit)?,
+        after: ((ReflectiveHookScope) -> Unit)?,
+    ): RoreHookHandle {
+        method.isAccessible = true
+
+        val configureBuilder: (Any) -> Unit = { builder ->
+            before?.let { callback ->
+                installBuilderCallback(builder, "before", callback)
+            }
+            after?.let { callback ->
+                installBuilderCallback(builder, "after", callback)
+            }
+        }
+
+        val rawUnhook = hookWithBuilder.invoke(
+            null,
+            method,
+            configureBuilder,
+        ) ?: error("Revenge hook helper returned null")
+
+        return RoreHookHandle {
+            invokeMethod(rawUnhook, "unhook")
+        }
+    }
+
+    private fun installBuilderCallback(
+        builder: Any,
+        name: String,
+        callback: (ReflectiveHookScope) -> Unit,
+    ) {
+        val builderMethod = builder.javaClass.methods.firstOrNull { method ->
+            method.name == name &&
+                method.parameterCount == 1 &&
+                method.parameterTypes[0].name == "kotlin.jvm.functions.Function1"
+        } ?: error("Revenge MethodHookBuilder.$name is unavailable")
+
+        val function: (Any) -> Unit = { rawScope ->
+            callback(ReflectiveHookScope(rawScope))
+        }
+
+        builderMethod.invoke(builder, function)
+    }
+}
+
+private fun readField(instance: Any, name: String): Any? {
+    var type: Class<*>? = instance.javaClass
+    while (type != null) {
+        val field = runCatching { type.getDeclaredField(name) }.getOrNull()
+        if (field != null) {
+            return runCatching {
+                field.isAccessible = true
+                field.get(instance)
+            }.getOrNull()
+        }
+        type = type.superclass
+    }
+    return null
+}
+
+private fun readStaticField(type: Class<*>, name: String): Any? {
+    var current: Class<*>? = type
+    while (current != null) {
+        val field = runCatching { current.getDeclaredField(name) }.getOrNull()
+        if (field != null && Modifier.isStatic(field.modifiers)) {
+            return runCatching {
+                field.isAccessible = true
+                field.get(null)
+            }.getOrNull()
+        }
+        current = current.superclass
+    }
+    return null
+}
+
+private fun invokeStaticMethod(
+    type: Class<*>,
+    name: String,
+    vararg args: Any?,
+): Any? {
+    val method = findCompatibleMethod(type, name, args, requireStatic = true)
+        ?: error("No compatible static method ${type.name}.$name/${args.size}")
+    method.isAccessible = true
+    return method.invoke(null, *args)
+}
+
+private fun invokeMethod(
+    instance: Any,
+    name: String,
+    vararg args: Any?,
+): Any? {
+    val method = findCompatibleMethod(
+        instance.javaClass,
+        name,
+        args,
+        requireStatic = false,
+    ) ?: error("No compatible method ${instance.javaClass.name}.$name/${args.size}")
+
+    method.isAccessible = true
+    return method.invoke(instance, *args)
+}
+
+private fun findCompatibleMethod(
+    startType: Class<*>,
+    name: String,
+    args: Array<out Any?>,
+    requireStatic: Boolean,
+): Method? {
+    var type: Class<*>? = startType
+    val candidates = mutableListOf<Method>()
+
+    while (type != null) {
+        candidates += type.declaredMethods.filter { method ->
+            method.name == name &&
+                method.parameterCount == args.size &&
+                Modifier.isStatic(method.modifiers) == requireStatic &&
+                method.parameterTypes.indices.all { index ->
+                    isArgumentCompatible(method.parameterTypes[index], args[index])
+                }
+        }
+        type = type.superclass
+    }
+
+    // Prefer exact runtime matches over broad interfaces such as CharSequence/Object.
+    return candidates.maxByOrNull { method ->
+        method.parameterTypes.indices.sumOf { index ->
+            compatibilityScore(method.parameterTypes[index], args[index])
+        }
+    }
+}
+
+private fun isArgumentCompatible(type: Class<*>, value: Any?): Boolean {
+    if (value == null) return !type.isPrimitive
+    return boxedType(type).isAssignableFrom(value.javaClass)
+}
+
+private fun compatibilityScore(type: Class<*>, value: Any?): Int {
+    if (value == null) return 0
+    val boxed = boxedType(type)
+    return when {
+        boxed == value.javaClass -> 4
+        boxed.isAssignableFrom(value.javaClass) -> 2
+        else -> 0
+    }
+}
+
+private fun boxedType(type: Class<*>): Class<*> = when (type) {
+    java.lang.Boolean.TYPE -> java.lang.Boolean::class.java
+    java.lang.Byte.TYPE -> java.lang.Byte::class.java
+    java.lang.Character.TYPE -> java.lang.Character::class.java
+    java.lang.Short.TYPE -> java.lang.Short::class.java
+    java.lang.Integer.TYPE -> java.lang.Integer::class.java
+    java.lang.Long.TYPE -> java.lang.Long::class.java
+    java.lang.Float.TYPE -> java.lang.Float::class.java
+    java.lang.Double.TYPE -> java.lang.Double::class.java
+    java.lang.Void.TYPE -> java.lang.Void::class.java
+    else -> type
 }
 
 private fun dp(context: Context, value: Int): Int {
